@@ -2,7 +2,7 @@ from conan import ConanFile, tools
 from conan.tools.env import Environment
 from conan.tools.microsoft import VCVars, is_msvc
 from conan.tools.meson import Meson
-from conan.tools.files import rm, rmdir, chdir, patch
+from conan.tools.files import rm, rmdir, chdir, patch, get, copy
 from conan.tools.scm import Version
 from conan.errors import ConanInvalidConfiguration
 import glob
@@ -118,7 +118,7 @@ class GStPluginsBaseConan(ConanFile):
             if self.options.with_graphene:
                 self.requires("graphene/1.10.8")
             if self.options.with_libpng:
-                self.requires("libpng/1.6.37")
+                self.requires("libpng/[>=1.6 <2]")
             if self.options.with_libjpeg == "libjpeg":
                 self.requires("libjpeg/9d")
             elif self.options.with_libjpeg == "libjpeg-turbo":
@@ -132,7 +132,7 @@ class GStPluginsBaseConan(ConanFile):
         if self.options.with_vorbis:
             self.requires("vorbis/1.3.7")
         if self.options.with_pango:
-            self.requires("pango/1.49.3")
+            self.requires("pango/[>=1.49 <2]")
 
     def build_requirements(self):
         self.tool_requires("meson/0.61.2")
@@ -147,8 +147,8 @@ class GStPluginsBaseConan(ConanFile):
             self.tool_requires("gobject-introspection/1.70.0")
 
     def source(self):
-        tools.get(self, **self.conan_data["sources"][self.version],
-                  destination=self._source_subfolder, strip_root=True)
+        get(self, **self.conan_data["sources"][self.version],
+            destination=self._source_subfolder, strip_root=True)
 
     def _gl_config(self):
         if not self._gl_api or not self._gl_platform or not self._gl_winsys:
@@ -259,7 +259,7 @@ class GStPluginsBaseConan(ConanFile):
 
     def _fix_library_names(self, path):
         # regression in 1.16
-        if self.settings.compiler == "Visual Studio":
+        if is_msvc(self):
             with chdir(path):
                 for filename_old in glob.glob("*.a"):
                     filename_new = filename_old[3:-2] + ".lib"
@@ -267,7 +267,7 @@ class GStPluginsBaseConan(ConanFile):
                     shutil.move(filename_old, filename_new)
 
     def package(self):
-        self.copy(pattern="COPYING", dst="licenses", src=self._source_subfolder)
+        copy(self, pattern="COPYING", dst="licenses", src=self._source_subfolder)
         if is_msvc(self):
             meson = self._configure_meson()
             meson.build()
