@@ -1,6 +1,12 @@
-from conans import ConanFile, tools, Meson, VisualStudioBuildEnvironment
-from conans.errors import ConanInvalidConfiguration
-from conan.tools.microsoft import msvc_runtime_flag
+from conan import ConanFile
+from conan.tools.env import Environment
+from conan.tools.microsoft import VCVars, is_msvc, msvc_runtime_flag
+from conan.tools.meson import Meson, MesonToolchain
+from conan.errors import ConanInvalidConfiguration
+from conan.tools.gnu import PkgConfigDeps
+from conan.tools.layout import basic_layout
+from conan.tools.scm import Version
+from conan.tools.files import rm, rmdir, chdir, patch, get, copy
 import glob
 import os
 import shutil
@@ -25,25 +31,15 @@ class GStPluginsUglyConan(ConanFile):
         "fPIC": True,
         "with_introspection": False,
         }
-    _source_subfolder = "source_subfolder"
-    _build_subfolder = "build_subfolder"
     exports_sources = ["patches/*.patch"]
 
-    generators = "pkg_config"
-
-    @property
-    def _is_msvc(self):
-        return self.settings.compiler == "Visual Studio"
-
     def validate(self):
-        if self.options.shared != self.options["gstreamer"].shared or \
-            self.options.shared != self.options["glib"].shared or \
-            self.options.shared != self.options["gst-plugins-base"].shared:
-                # https://gitlab.freedesktop.org/gstreamer/gst-build/-/issues/133
-                raise ConanInvalidConfiguration("GLib, GStreamer and GstPlugins must be either all shared, or all static")
-        if tools.Version(self.version) >= "1.18.2" and\
+        if self.options.shared != self.dependencies["gstreamer"].options.shared or self.options.shared != self.dependencies["glib"].options.shared or self.options.shared != self.dependencies["gst-plugins-base"].options.shared:
+            # https://gitlab.freedesktop.org/gstreamer/gst-build/-/issues/133
+            raise ConanInvalidConfiguration("GLib, GStreamer and GstPlugins must be either all shared, or all static")
+        if Version(self.version) >= "1.18.2" and\
            self.settings.compiler == "gcc" and\
-           tools.Version(self.settings.compiler.version) < "5":
+           Version(self.settings.compiler.version) < "5":
             raise ConanInvalidConfiguration(
                 "gst-plugins-ugly%s does not support gcc older than 5" % self.version
             )
@@ -63,13 +59,13 @@ class GStPluginsUglyConan(ConanFile):
             del self.options.fPIC
 
     def requirements(self):
-        self.requires("glib/2.70.1")
-        self.requires("gstreamer/1.19.1")
+        self.requires("glib/2.78.3")
+        self.requires("gstreamer/1.19.2")
         self.requires("gst-plugins-base/1.19.1")
 
     def build_requirements(self):
-        self.build_requires("meson/0.54.2")
-        if not tools.which("pkg-config"):
+        self.tool_requires("meson/[>=1.2 <2]")
+        if not shutil.which("pkg-config"):
             self.build_requires("pkgconf/1.7.4")
         if self.settings.os == 'Windows':
             self.build_requires("winflexbison/2.5.24")
@@ -80,74 +76,65 @@ class GStPluginsUglyConan(ConanFile):
             self.build_requires("gobject-introspection/1.68.0")
 
     def source(self):
-        tools.get(**self.conan_data["sources"][self.version],
-                  destination=self._source_subfolder, strip_root=True)
+        get(self, **self.conan_data["sources"][self.version], strip_root=True)
 
-    def _configure_meson(self):
-        defs = dict()
+    def layout(self):
+        basic_layout(self, src_folder="src")
 
-        def add_flag(name, value):
-            if name in defs:
-                defs[name] += " " + value
-            else:
-                defs[name] = value
+    def generate(self):
+        tc = MesonToolchain(self)
 
-        def add_compiler_flag(value):
-            add_flag("c_args", value)
-            add_flag("cpp_args", value)
-
-        def add_linker_flag(value):
-            add_flag("c_link_args", value)
-            add_flag("cpp_link_args", value)
-
-        meson = Meson(self)
-        if self.settings.compiler == "Visual Studio":
-            add_linker_flag("-lws2_32")
-            add_compiler_flag("-%s" % self.settings.compiler.runtime)
+        if is_msvc(self):
+            env = Environment()
+            env.append(VCVars(self).vars)
+            envvars = env.vars(self, scope="build")
+            envvars.save_script("vc_vars")
+            tc.project_options["c_link_args"] = "-lws2_32"
+            tc.project_options["cpp_link_args"] = "-lws2_32"
             if int(str(self.settings.compiler.version)) < 14:
-                add_compiler_flag("-Dsnprintf=_snprintf")
+                tc.project_options["c_args"] = "-Dsnprintf=_snprintf"
+                tc.project_options["cpp_args"] = "-Dsnprintf=_snprintf"
+
         if self.settings.get_safe("compiler.runtime"):
-            defs["b_vscrt"] = str(self.settings.compiler.runtime).lower()
-        defs["tools"] = "disabled"
-        defs["examples"] = "disabled"
-        defs["benchmarks"] = "disabled"
-        defs["tests"] = "disabled"
-        defs["wrap_mode"] = "nofallback"
-        defs["introspection"] = "enabled" if self.options.with_introspection else "disabled"
-        meson.configure(build_folder=self._build_subfolder,
-                        source_folder=self._source_subfolder,
-                        defs=defs)
-        return meson
+            tc.project_options["b_vscrt"] = str(self.settings.compiler.runtime).lower()
+        tc.project_options["tools"] = "disabled"
+        tc.project_options["examples"] = "disabled"
+        tc.project_options["benchmarks"] = "disabled"
+        tc.project_options["tests"] = "disabled"
+        tc.project_options["wrap_mode"] = "nofallback"
+        tc.project_options["introspection"] = "enabled" if self.options.with_introspection else "disabled"
+        tc.generate()
+        deps = PkgConfigDeps(self)
+        deps.generate()
 
     def build(self):
-        for patch in self.conan_data.get("patches", {}).get(self.version, []):
-            tools.patch(**patch)
+        for patchfile in self.conan_data.get("patches", {}).get(self.version, []):
+            patch(self, **patchfile)
+        meson = Meson(self)
+        meson.configure()
+        meson.build()
 
-        with tools.environment_append(VisualStudioBuildEnvironment(self).vars) if self._is_msvc else tools.no_op():
-            meson = self._configure_meson()
-            meson.build()
-
+    # REVIEW!
     def _fix_library_names(self, path):
         # regression in 1.16
-        if self.settings.compiler == "Visual Studio":
-            with tools.chdir(path):
+        if is_msvc(self):
+            with chdir(path):
                 for filename_old in glob.glob("*.a"):
                     filename_new = filename_old[3:-2] + ".lib"
                     self.output.info("rename %s into %s" % (filename_old, filename_new))
                     shutil.move(filename_old, filename_new)
 
     def package(self):
-        self.copy(pattern="COPYING", dst="licenses", src=self._source_subfolder)
-        with tools.environment_append(VisualStudioBuildEnvironment(self).vars) if self._is_msvc else tools.no_op():
-            meson = self._configure_meson()
-            meson.install()
+        copy(self, "COPYING", self.source_folder, os.path.join(self.package_folder, "licenses"))
+        meson = Meson(self)
+        meson.install()
 
         self._fix_library_names(os.path.join(self.package_folder, "lib"))
         self._fix_library_names(os.path.join(self.package_folder, "lib", "gstreamer-1.0"))
-        tools.rmdir(os.path.join(self.package_folder, "share"))
-        tools.rmdir(os.path.join(self.package_folder, "lib", "pkgconfig"))
-        tools.rmdir(os.path.join(self.package_folder, "lib", "gstreamer-1.0", "pkgconfig"))
-        tools.remove_files_by_mask(self.package_folder, "*.pdb")
+        rmdir(os.path.join(self.package_folder, "share"))
+        rmdir(os.path.join(self.package_folder, "lib", "pkgconfig"))
+        rmdir(os.path.join(self.package_folder, "lib", "gstreamer-1.0", "pkgconfig"))
+        rm(self, "*.pdb", self.package_folder)
 
     def package_info(self):
 
