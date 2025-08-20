@@ -119,7 +119,7 @@ class GStPluginsGoodConan(ConanFile):
 
     def _fix_library_names(self, path):
         # regression in 1.16
-        if self.settings.compiler == "Visual Studio":
+        if is_msvc(self):
             with chdir(path):
                 for filename_old in glob.glob("*.a"):
                     filename_new = filename_old[3:-2] + ".lib"
@@ -133,9 +133,9 @@ class GStPluginsGoodConan(ConanFile):
 
         self._fix_library_names(os.path.join(self.package_folder, "lib"))
         self._fix_library_names(os.path.join(self.package_folder, "lib", "gstreamer-1.0"))
-        rmdir(os.path.join(self.package_folder, "share"))
-        rmdir(os.path.join(self.package_folder, "lib", "pkgconfig"))
-        rmdir(os.path.join(self.package_folder, "lib", "gstreamer-1.0", "pkgconfig"))
+        rmdir(self, os.path.join(self.package_folder, "share"))
+        rmdir(self, os.path.join(self.package_folder, "lib", "pkgconfig"))
+        rmdir(self, os.path.join(self.package_folder, "lib", "gstreamer-1.0", "pkgconfig"))
         rm(self, "*.pdb", self.package_folder)
 
     def package_info(self):
@@ -195,4 +195,5 @@ class GStPluginsGoodConan(ConanFile):
             self.cpp_info.libdirs.append(gst_plugin_path)
             self.cpp_info.libs.extend(["gst%s" % plugin for plugin in plugins])
 
-        self.cpp_info.includedirs = ["include", os.path.join("include", "gstreamer-1.0")]
+        self.cpp_info.includedirs = []
+        # self.cpp_info.includedirs = ["include", os.path.join("include", "gstreamer-1.0")]
