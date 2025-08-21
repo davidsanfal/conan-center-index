@@ -4,8 +4,9 @@ from conan.tools.microsoft import VCVars, is_msvc
 from conan.tools.meson import Meson, MesonToolchain
 from conan.tools.gnu import PkgConfigDeps
 from conan.tools.layout import basic_layout
-from conan.tools.files import rm, rmdir, chdir, patch, get, copy
+from conan.tools.files import rm, rmdir, chdir, get, copy, apply_conandata_patches, replace_in_file
 from conan.tools.scm import Version
+from conan.tools.system import package_manager
 from conan.errors import ConanInvalidConfiguration
 import glob
 import os
@@ -80,6 +81,10 @@ class GStPluginsBaseConan(ConanFile):
         if self.options.with_gl and self.options.get_safe("with_wayland") and not self.options.get_safe("with_egl"):
             raise ConanInvalidConfiguration("OpenGL support with Wayland requires 'with_egl' turned on!")
 
+    def system_requirements(self):
+        apt = package_manager.Apt(self)
+        apt.install_substitutes(["libnsl-dev"], update=True, check=True)
+
     def configure(self):
         if self.options.shared:
             del self.options.fPIC
@@ -145,6 +150,7 @@ class GStPluginsBaseConan(ConanFile):
             self.tool_requires("flex/2.6.4")
         if self.options.with_introspection:
             self.tool_requires("gobject-introspection/1.70.0")
+        self.tool_requires("glib/<host_version>")  # for glib-mkenums
 
     def source(self):
         get(self, **self.conan_data["sources"][self.version], strip_root=True)
@@ -235,8 +241,12 @@ class GStPluginsBaseConan(ConanFile):
         deps.generate()
 
     def build(self):
-        for patchfile in self.conan_data.get("patches", {}).get(self.version, []):
-            patch(self, **patchfile)
+        apply_conandata_patches(self)
+        replace_in_file(self, os.path.join(self.source_folder, "gst-libs/gst/gl/meson.build"),
+                        "wayland_scanner = find_program('wayland-scanner', required: false)",
+                        "wayland_scanner_dep = dependency('wayland-scanner', required : false)"
+                        "\nwayland_scanner = find_program(wayland_scanner_dep.get_variable(pkgconfig: 'wayland_scanner'),required : false)")
+
         meson = Meson(self)
         meson.configure()
         meson.build()
