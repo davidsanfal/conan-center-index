@@ -151,6 +151,8 @@ class GStPluginsBaseConan(ConanFile):
         if self.options.with_introspection:
             self.tool_requires("gobject-introspection/1.70.0")
         self.tool_requires("glib/<host_version>")  # for glib-mkenums
+        if self.options.get_safe("with_wayland"):
+            self.tool_requires("wayland/<host_version>")  # for wayland-scanner
 
     def source(self):
         get(self, **self.conan_data["sources"][self.version], strip_root=True)
@@ -242,10 +244,10 @@ class GStPluginsBaseConan(ConanFile):
 
     def build(self):
         apply_conandata_patches(self)
-        replace_in_file(self, os.path.join(self.source_folder, "gst-libs/gst/gl/meson.build"),
-                        "wayland_scanner = find_program('wayland-scanner', required: false)",
-                        "wayland_scanner_dep = dependency('wayland-scanner', required : false)"
-                        "\nwayland_scanner = find_program(wayland_scanner_dep.get_variable(pkgconfig: 'wayland_scanner'),required : false)")
+        # replace_in_file(self, os.path.join(self.source_folder, "gst-libs/gst/gl/meson.build"),
+        #                 "wayland_scanner = find_program('wayland-scanner', required: false)",
+        #                 "wayland_scanner_dep = dependency('wayland-scanner', required : false)"
+        #                 "\nwayland_scanner = find_program(wayland_scanner_dep.get_variable(pkgconfig: 'wayland_scanner'),required : false)")
 
         meson = Meson(self)
         meson.configure()
