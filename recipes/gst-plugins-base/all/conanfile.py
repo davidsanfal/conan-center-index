@@ -1,6 +1,6 @@
 from conan import ConanFile
 from conan.tools.env import Environment
-from conan.tools.microsoft import VCVars, is_msvc
+from conan.tools.microsoft import msvc_runtime_flag, is_msvc
 from conan.tools.meson import Meson, MesonToolchain
 from conan.tools.gnu import PkgConfigDeps
 from conan.tools.layout import basic_layout
@@ -52,8 +52,8 @@ class GStPluginsBaseConan(ConanFile):
         "with_opus": True,
         "with_theora": True,
         "with_vorbis": True,
-        "with_gl": True,
-        "with_egl": True,
+        "with_gl": False,
+        "with_egl": False,
         "with_wayland": True,
         "with_xorg": True,
         "with_introspection": False,
@@ -88,7 +88,8 @@ class GStPluginsBaseConan(ConanFile):
     def configure(self):
         if self.options.shared:
             del self.options.fPIC
-        del self.settings.compiler.libcxx
+        if not is_msvc(self):
+            del self.settings.compiler.libcxx
         del self.settings.compiler.cppstd
         self.options['gstreamer'].shared = self.options.shared
 
@@ -114,7 +115,7 @@ class GStPluginsBaseConan(ConanFile):
             self.requires("opengl/system")
             if self.settings.os == "Windows":
                 self.requires("wglext/cci.20200813")
-                self.requires('glext/cci.20210420')
+                self.requires("glext/cci.20210420")
             if self.options.get_safe("with_egl"):
                 self.requires("egl/system")
             if self.options.get_safe("with_wayland"):
@@ -198,19 +199,16 @@ class GStPluginsBaseConan(ConanFile):
         tc = MesonToolchain(self)
 
         if is_msvc(self):
-            env = Environment()
-            env.append(VCVars(self).vars)
-            envvars = env.vars(self, scope="build")
-            envvars.save_script("vc_vars")
-            tc.project_options["c_link_args"] = "-lws2_32"
-            tc.project_options["cpp_link_args"] = "-lws2_32"
-            # add_compiler_flag("-%s" % self.settings.compiler.runtime)
+            tc.c_link_args.append("-lws2_32")
+            tc.cpp_link_args.append("-lws2_32")
+            tc.c_args.append(f"-{msvc_runtime_flag(self)}")
+            tc.cpp_args.append(f"-{msvc_runtime_flag(self)}")
             if int(str(self.settings.compiler.version)) < 14:
-                tc.project_options["c_args"] = "-Dsnprintf=_snprintf"
-                tc.project_options["cpp_args"] = "-Dsnprintf=_snprintf"
+                tc.c_args.append("-Dsnprintf=_snprintf")
+                tc.cpp_args.append("-Dsnprintf=_snprintf")
 
-        if self.settings.get_safe("compiler.runtime"):
-            tc.project_options["b_vscrt"] = str(self.settings.compiler.runtime).lower()
+            if msvc_runtime_flag(self):
+                tc.project_options["b_vscrt"] = msvc_runtime_flag(self).lower()
 
         gl_api, gl_platform, gl_winsys = self._gl_config()
         tc.project_options["tools"] = "disabled"
@@ -256,7 +254,7 @@ class GStPluginsBaseConan(ConanFile):
     def _fix_library_names(self, path):
         # regression in 1.16
         if is_msvc(self):
-            with chdir(path):
+            with chdir(self, path):
                 for filename_old in glob.glob("*.a"):
                     filename_new = filename_old[3:-2] + ".lib"
                     self.output.info("rename %s into %s" % (filename_old, filename_new))
@@ -616,7 +614,7 @@ class GStPluginsBaseConan(ConanFile):
                     "wayland-protocols::wayland-protocols"])
             if self.settings.os == "Windows":
                 self.cpp_info.components["gstreamer-gl-1.0"].requires.append("wglext::wglext")
-                self.cpp_info.components["gstreamer-gl-1.0"].requires.extend(['glext::glext'])
+                self.cpp_info.components["gstreamer-gl-1.0"].requires.extend(["glext::glext"])
                 self.cpp_info.components["gstreamer-gl-1.0"].system_libs = ["gdi32"]
             if self.settings.os in ["Macos", "iOS", "tvOS", "watchOS"]:
                 self.cpp_info.components["gstreamer-gl-1.0"].frameworks = ["CoreFoundation", "Foundation", "QuartzCore", "Cocoa"]
